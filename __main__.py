@@ -43,7 +43,7 @@ def _remove(args):
     raise NotImplementedError("Remove feature is not implemented yet.")
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(prog="redisTQ")
     parser.add_argument('exp_name')
 
     parser.add_argument('--host', default='localhost')

@@ -61,7 +61,7 @@ def _worker_wrap(redisconf, worker, args):
             rdb.srem( redisconf['running_set'], current )
 
 
-def start_slave_process(cliargs, task_name, worker_func, nworker, bind_args):
+def start_slave_process(cliargs, task_name, worker_func, bind_args):
     # starting multiprocessing workers
     redisconf = {
         'rdb': _redis_db(cliargs),
@@ -71,9 +71,9 @@ def start_slave_process(cliargs, task_name, worker_func, nworker, bind_args):
         **_redis_lists(task_name),
     }
 
-    print(f"[Starting multiprocessing with {nworker} workers]")
+    print(f"[Starting multiprocessing with {cliargs.worker} workers]")
     ps = [ Process(target=_worker_wrap, args=(redisconf, worker_func, bind_args))
-           for _ in range(nworker) ]
+           for _ in range(cliargs.worker) ]
     [ p.start() for p in ps ]
     [ p.join() for p in ps ]
 

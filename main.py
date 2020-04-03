@@ -21,7 +21,7 @@ from .connection import _redis_lists, _redis_db
 def confirm(str):
     return input(str).lower() in ['yes', 'y']
 
-def _worker_wrap(redisconf, worker, args):
+def _worker_wrap(redisconf, worker, args, single):
     # wrapper around actual worker that receiev tasks from redis
     rdb = redisconf['rdb']
 
@@ -33,18 +33,20 @@ def _worker_wrap(redisconf, worker, args):
         while fail_count < redisconf['fail_tolerance'] :
             rawtask = rdb.lpop( redisconf['todo_queue'] )
             if rawtask:
-                task = pickle.loads(gzip.decompress(rawtask))
-                tag =  f"{hostname}/{task[0]}" # task[0] should always be the tag
-                try: 
-                    rdb.sadd( redisconf['running_set'], rawtask )
+                rdb.sadd( redisconf['running_set'], rawtask ) 
+                try:
+                    task = pickle.loads(gzip.decompress(rawtask))
+                    tag =  f"{hostname}/{task['tag'] if isinstance(task, dict) else task[0]}" # task[0] should always be the tag
                     current = rawtask
                     worker( *args, task )
                     current = None
                     rdb.sadd( redisconf['done_set'], tag )
                     fail_count = 0
-                except:
+                except Exception as e:
                     rdb.sadd( redisconf['fail_set'], rawtask )
                     fail_count += 1
+                    if single:
+                        raise e
                 finally:
                     rdb.srem( redisconf['running_set'], rawtask )
             else:
@@ -53,8 +55,10 @@ def _worker_wrap(redisconf, worker, args):
             # too many fails
             print("[Too many fails in a row!]")
 
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as e:
         print("[Keyboard Break!]")
+        if single:
+            raise e
     finally:
         if current is not None:
             rdb.sadd( redisconf['fail_set'], current )
@@ -72,10 +76,14 @@ def start_slave_process(cliargs, task_name, worker_func, bind_args):
     }
 
     print(f"[Starting multiprocessing with {cliargs.worker} workers]")
-    ps = [ Process(target=_worker_wrap, args=(redisconf, worker_func, bind_args))
-           for _ in range(cliargs.worker) ]
-    [ p.start() for p in ps ]
-    [ p.join() for p in ps ]
+    if cliargs.worker > 1:
+        ps = [ Process(target=_worker_wrap, args=(redisconf, worker_func, bind_args, False))
+            for _ in range(cliargs.worker) ]
+        [ p.start() for p in ps ]
+        [ p.join() for p in ps ]
+    else: # for debug
+        _worker_wrap(redisconf, worker_func, bind_args, True)
+
 
 def dispatch_tasks(cliargs, task_name, tasks):
     rdb = _redis_db(cliargs)
@@ -83,11 +91,10 @@ def dispatch_tasks(cliargs, task_name, tasks):
     # TODO: add warnning for writing to existing queue
     if rdb.llen(todo) > 0:
         print(f"[[[[ WARNING: {todo} is not Empty ]]]]")
-        if not confirm("overwrite? [y/n]"):
-            exit(1)
-    rdb.delete(todo)
-    print("[Dispatching...]")
-    for tk in tqdm(tasks):
+        if confirm("delete and restart? [y/n]"):
+            rdb.delete(todo)
+    
+    for tk in tqdm(tasks, desc="Dispatching"):
         rdb.rpush(todo, gzip.compress( pickle.dumps(tk) ) )
 
 def add_redis_arguments(parser):
@@ -102,7 +109,7 @@ def add_redis_arguments(parser):
 
     parser.add_argument('--worker', type=int, default=4)
     parser.add_argument('--sleep', type=float, default=5.)
-    parser.add_argument('--fail_tolerance', type=int, default=3)
+    parser.add_argument('--fail_tolerance', type=int, default=20)
 
     parser.set_defaults(redis=True)
 

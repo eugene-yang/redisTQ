@@ -1,5 +1,5 @@
 import argparse
-
+from tqdm import tqdm
 from .connection import _redis_lists, _redis_db
 
 def _get_tasks(rdb, exp_name):
@@ -17,7 +17,8 @@ def _progress(rdb, args):
         for tk in tasks
     })
 
-    print(res.T.sort_index().sort_values(['todo_queue', 'done_set']))
+    order = args.sortby if args.sortby is not None else ['todo_queue', 'done_set']
+    print(res.T.sort_index().sort_values(order))
 
 
 def _summary(args):
@@ -34,13 +35,23 @@ def _clear(rdb, args):
     # clear the fail and running
     # not sure whether it is better to just remove the entire thing
 
-def _recycle(args):
-    raise NotImplementedError("Recycle feature is not implemented yet.")
-    # recycle the fail tasks
-    # TODO: need to change the worker wraper to push the entire task back to fail set
+def _recycle(rdb, args):
+    tasks = args.tasks
+    if args.all:
+        tasks = _get_tasks(rdb, args.exp_name)
+
+    for tk in tasks:
+        l = rdb.scard(f"{args.exp_name}/{tk}/fail_set")
+        if l == 0:
+            continue
+        for _ in tqdm(range(l), desc=tk):
+            e = rdb.spop(f"{args.exp_name}/{tk}/fail_set")
+            rdb.rpush( f"{args.exp_name}/{tk}/todo_queue", e )
     
-def _remove(args):
-    raise NotImplementedError("Remove feature is not implemented yet.")
+def _remove(rdb, args):
+    for tk in args.tasks:
+        for l in['todo_queue', 'running_set', 'done_set', 'fail_set']:
+            rdb.delete(f"{args.exp_name}/{tk}/{l}")
 
 def main():
     parser = argparse.ArgumentParser(prog="redisTQ")
@@ -52,6 +63,7 @@ def main():
     subparsers = parser.add_subparsers()
 
     parser_progress = subparsers.add_parser('progress')
+    parser_progress.add_argument('--sortby', type=str, nargs='+')
     parser_progress.set_defaults(func=_progress)
 
     parser_summary = subparsers.add_parser('summary')
@@ -65,7 +77,13 @@ def main():
     parser_clear.set_defaults(func=_clear)
     
     parser_remove = subparsers.add_parser('remove')
+    parser_remove.add_argument('--tasks', nargs='+')
     parser_remove.set_defaults(func=_remove)
+
+    parser_recycle = subparsers.add_parser('recycle')
+    parser_recycle.add_argument('--tasks', nargs='+')
+    parser_recycle.add_argument('--all', action='store_true')
+    parser_recycle.set_defaults(func=_recycle)
 
     args = parser.parse_args()
     args.func(_redis_db(args), args)

@@ -32,6 +32,8 @@ def _clear(rdb, args):
         rdb.delete(f"{args.exp_name}/{tk}/fail_set")
         if args.clear_running:
             rdb.delete(f"{args.exp_name}/{tk}/running_set")
+        if args.clear_done:
+            rdb.delete(f"{args.exp_name}/{tk}/done_set")
     # clear the fail and running
     # not sure whether it is better to just remove the entire thing
 
@@ -42,11 +44,16 @@ def _recycle(rdb, args):
 
     for tk in tasks:
         l = rdb.scard(f"{args.exp_name}/{tk}/fail_set")
-        if l == 0:
-            continue
-        for _ in tqdm(range(l), desc=tk):
-            e = rdb.spop(f"{args.exp_name}/{tk}/fail_set")
-            rdb.rpush( f"{args.exp_name}/{tk}/todo_queue", e )
+        if l > 0:    
+            for _ in tqdm(range(l), desc=tk):
+                e = rdb.spop(f"{args.exp_name}/{tk}/fail_set")
+                rdb.rpush( f"{args.exp_name}/{tk}/todo_queue", e )
+        if args.force:
+            l = rdb.scard(f"{args.exp_name}/{tk}/running_set")
+            if l > 0:
+                for _ in tqdm(range(l), desc=tk):
+                    e = rdb.spop(f"{args.exp_name}/{tk}/running_set")
+                    rdb.rpush( f"{args.exp_name}/{tk}/todo_queue", e )
     
 def _remove(rdb, args):
     for tk in args.tasks:
@@ -73,6 +80,7 @@ def main():
     parser_clear = subparsers.add_parser('clear')
     parser_clear.add_argument('--show_fail', action='store_true')
     parser_clear.add_argument('--clear_running', action='store_true')
+    parser_clear.add_argument('--clear_done', action='store_true')
     parser_clear.add_argument('--tasks', nargs='+')
     parser_clear.set_defaults(func=_clear)
     
@@ -83,6 +91,7 @@ def main():
     parser_recycle = subparsers.add_parser('recycle')
     parser_recycle.add_argument('--tasks', nargs='+')
     parser_recycle.add_argument('--all', action='store_true')
+    parser_recycle.add_argument('--force', action='store_true')
     parser_recycle.set_defaults(func=_recycle)
 
     args = parser.parse_args()

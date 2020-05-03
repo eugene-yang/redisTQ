@@ -47,6 +47,8 @@ def _worker_wrap(redisconf, worker, args, single):
                     fail_count += 1
                     if single:
                         raise e
+                    elif args.verbose_failure:
+                        print(e)
                 finally:
                     rdb.srem( redisconf['running_set'], rawtask )
             else:
@@ -110,6 +112,9 @@ def add_redis_arguments(parser):
     parser.add_argument('--worker', type=int, default=4)
     parser.add_argument('--sleep', type=float, default=5.)
     parser.add_argument('--fail_tolerance', type=int, default=20)
+
+    parser.add_argument('--verbose_failure', action='store_true', default=False)
+    # parser.add_argument('--dump_failure', action='store_true', default=False)
 
     parser.set_defaults(redis=True)
 
